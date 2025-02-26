@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>时间折叠：记忆迷宫</title>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            flex-direction: row; /* 横向排列 */
+            align-items: flex-start; /* 顶部对齐 */
+            justify-content: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+            background-color: #1e1e1e;
+            color: white;
+        }
+        #gameContainer {
+            text-align: center;
+            margin-right: 20px; /* 游戏界面与说明之间的间距 */
+        }
+        #instructions {
+            width: 300px; /* 说明区域的宽度 */
+            padding: 20px;
+            background-color: #2d2d2d;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+        #instructions h2 {
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        #instructions .item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+        #instructions .icon {
+            width: 30px;
+            height: 30px;
+            margin-right: 10px;
+        }
+        canvas {
+            display: block;
+            background-color: #2d2d2d;
+            border: 2px solid #555;
+        }
+        #gameInfo {
+            margin-bottom: 20px;
+            font-size: 20px;
+        }
+        #message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 30px;
+            display: none;
+            text-align: center;
+        }
+        #pauseButton, #restartButton, #nextLevelButton {
+            margin: 10px;
+            font-size: 16px;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        #nextLevelButton {
+            display: none;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <div id="gameInfo">
+            <span id="timer">时间: <span id="time">600</span>秒</span>
+            <span id="level">关卡: <span id="levelValue">1</span></span>
+            <span id="wallBreaker">破墙道具: <span id="wallBreakerCount">0</span></span>
+            <span id="keyStatus">钥匙: <span id="hasKey">未获得</span></span>
+        </div>
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div>
+            <button id="pauseButton">暂停</button>
+            <button id="restartButton">重新开始</button>
+        </div>
+    </div>
+
+    <!-- 说明区域 -->
+    <div id="instructions">
+        <h2>游戏说明</h2>
+        <div class="item">
+            <div class="icon" style="background-color: #ffa502;"></div>
+            <span>橙色方块是角色</span>
+        </div>
+        <div class="item">
+            <div class="icon" style="background-color: #00ff00; border-radius: 50%;"></div>
+            <span>绿色圆形是钥匙</span>
+        </div>
+        <div class="item">
+            <div class="icon" style="background-color: #ffffff; border-radius: 50%;"></div>
+            <span>白色圆形是破墙道具</span>
+        </div>
+        <div class="item">
+            <div class="icon" style="background-color: #3742fa;"></div>
+            <span>蓝色方块是终点</span>
+        </div>
+        <div class="item">
+            <div class="icon" style="background-color: #ff4757; position: relative;">
+                <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(45deg); width: 2px; height: 100%; background-color: white;"></div>
+                <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-45deg); width: 2px; height: 100%; background-color: white;"></div>
+            </div>
+            <span>红色叉号是陷阱</span>
+        </div>
+        <div class="item">
+            <span style="font-weight: bold;">操作提示：</span>
+        </div>
+        <div class="item">
+            <span>WASD 移动</span>
+        </div>
+        <div class="item">
+            <span>E 使用破墙道具</span>
+        </div>
+        <div class="item">
+            <span>尽力到达终点吧！</span>
+        </div>
+    </div>
+
+    <div id="message">
+        <div id="messageText"></div>
+        <button id="nextLevelButton">下一关</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const timerElement = document.getElementById('time');
+        const levelElement = document.getElementById('levelValue');
+        const wallBreakerElement = document.getElementById('wallBreakerCount');
+        const keyStatusElement = document.getElementById('hasKey');
+        const messageElement = document.getElementById('message');
+        const messageTextElement = document.getElementById('messageText');
+        const pauseButton = document.getElementById('pauseButton');
+        const restartButton = document.getElementById('restartButton');
+        const nextLevelButton = document.getElementById('nextLevelButton');
+
+        // 初始游戏配置
+        const INITIAL_TILE_SIZE = 100; // 初始格子大小
+        const INITIAL_MAZE_WIDTH = 8; // 初始迷宫宽度
+        const INITIAL_MAZE_HEIGHT = 6; // 初始迷宫高度
+        const TIME_LIMIT = 600; // 时间限制（秒）
+        const FOLD_INTERVAL = 3; // 迷宫折叠间隔（秒）
+        const INITIAL_TRAP_COUNT = 3; // 初始陷阱数量
+        const WALL_BREAKER_COUNT = 2; // 破墙道具数量
+
+        // 游戏变量
+        let maze = [];
+        let player = { x: 1, y: 1 };
+        let traps = [];
+        let wallBreakers = [];
+        let wallBreakerUses = 0; // 破墙道具剩余使用次数
+        let timeLeft = TIME_LIMIT;
+        let foldTimer = FOLD_INTERVAL;
+        let isGameOver = false;
+        let isPaused = false;
+        let lastTime = Date.now(); // 使用 Date.now() 记录时间
+        let currentLevel = 1; // 当前关卡
+        let TILE_SIZE = INITIAL_TILE_SIZE; // 当前格子大小
+        let MAZE_WIDTH = INITIAL_MAZE_WIDTH; // 当前迷宫宽度
+        let MAZE_HEIGHT = INITIAL_MAZE_HEIGHT; // 当前迷宫高度
+        let TRAP_COUNT = INITIAL_TRAP_COUNT; // 当前陷阱数量
+        let hasKey = false; // 是否捡到钥匙
+        let key = null; // 钥匙位置
+
+        // 初始化游戏
+        function init() {
+            generateMaze();
+            generateTraps();
+            generateWallBreakers();
+            generateKey();
+            draw();
+            gameLoop();
+        }
+
+        // 生成迷宫
+        function generateMaze() {
+            maze = [];
+            for (let y = 0; y < MAZE_HEIGHT; y++) {
+                maze[y] = [];
+                for (let x = 0; x < MAZE_WIDTH; x++) {
+                    maze[y][x] = Math.random() > 0.7 ? 1 : 0; // 1 是墙，0 是路
+                }
+            }
+            // 确保起点和终点是通路
+            maze[1][1] = 0;
+            maze[MAZE_HEIGHT - 2][MAZE_WIDTH - 2] = 0;
+        }
+
+        // 生成陷阱
+        function generateTraps() {
+            traps = [];
+            for (let i = 0; i < TRAP_COUNT; i++) {
+                let x, y;
+                do {
+                    x = Math.floor(Math.random() * MAZE_WIDTH);
+                    y = Math.floor(Math.random() * MAZE_HEIGHT);
+                } while (maze[y][x] === 1 || (x === player.x && y === player.y)); // 确保陷阱不在墙上或玩家位置
+                traps.push({ x, y });
+            }
+        }
+
+        // 生成破墙道具
+        function generateWallBreakers() {
+            wallBreakers = [];
+            for (let i = 0; i < WALL_BREAKER_COUNT; i++) {
+                let x, y;
+                do {
+                    x = Math.floor(Math.random() * MAZE_WIDTH);
+                    y = Math.floor(Math.random() * MAZE_HEIGHT);
+                } while (maze[y][x] === 1 || (x === player.x && y === player.y)); // 确保道具不在墙上或玩家位置
+                wallBreakers.push({ x, y });
+            }
+        }
+
+        // 生成绿色钥匙（必须在墙体内）
+        function generateKey() {
+            do {
+                key = {
+                    x: Math.floor(Math.random() * MAZE_WIDTH),
+                    y: Math.floor(Math.random() * MAZE_HEIGHT)
+                };
+            } while (maze[key.y][key.x] !== 1); // 确保钥匙在墙体内
+            maze[key.y][key.x] = 1; // 确保钥匙所在位置始终是墙体
+        }
+
+        // 绘制游戏
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 绘制迷宫
+            for (let y = 0; y < MAZE_HEIGHT; y++) {
+                for (let x = 0; x < MAZE_WIDTH; x++) {
+                    if (maze[y][x] === 1) {
+                        ctx.fillStyle = '#555';
+                        ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                    }
+                }
+            }
+
+            // 绘制陷阱（红色叉号）
+            ctx.strokeStyle = '#ff4757';
+            ctx.lineWidth = 3;
+            traps.forEach(trap => {
+                ctx.beginPath();
+                ctx.moveTo(trap.x * TILE_SIZE + 5, trap.y * TILE_SIZE + 5);
+                ctx.lineTo((trap.x + 1) * TILE_SIZE - 5, (trap.y + 1) * TILE_SIZE - 5);
+                ctx.moveTo((trap.x + 1) * TILE_SIZE - 5, trap.y * TILE_SIZE + 5);
+                ctx.lineTo(trap.x * TILE_SIZE + 5, (trap.y + 1) * TILE_SIZE - 5);
+                ctx.stroke();
+            });
+
+            // 绘制破墙道具（白色圆形）
+            ctx.fillStyle = '#ffffff';
+            wallBreakers.forEach(breaker => {
+                ctx.beginPath();
+                ctx.arc(
+                    breaker.x * TILE_SIZE + TILE_SIZE / 2,
+                    breaker.y * TILE_SIZE + TILE_SIZE / 2,
+                    TILE_SIZE / 4,
+                    0,
+                    2 * Math.PI
+                );
+                ctx.fill();
+            });
+
+            // 绘制绿色钥匙（绿色圆形）
+            if (!hasKey) {
+                ctx.fillStyle = '#00ff00';
+                ctx.beginPath();
+                ctx.arc(
+                    key.x * TILE_SIZE + TILE_SIZE / 2,
+                    key.y * TILE_SIZE + TILE_SIZE / 2,
+                    TILE_SIZE / 4,
+                    0,
+                    2 * Math.PI
+                );
+                ctx.fill();
+            }
+
+            // 绘制玩家（橙色方形）
+            ctx.fillStyle = '#ffa502';
+            ctx.fillRect(
+                player.x * TILE_SIZE + (TILE_SIZE - TILE_SIZE / 2) / 2,
+                player.y * TILE_SIZE + (TILE_SIZE - TILE_SIZE / 2) / 2,
+                TILE_SIZE / 2,
+                TILE_SIZE / 2
+            );
+
+            // 绘制终点（蓝色方形）
+            ctx.fillStyle = '#3742fa';
+            ctx.fillRect(
+                (MAZE_WIDTH - 2) * TILE_SIZE + (TILE_SIZE - TILE_SIZE / 2) / 2,
+                (MAZE_HEIGHT - 2) * TILE_SIZE + (TILE_SIZE - TILE_SIZE / 2) / 2,
+                TILE_SIZE / 2,
+                TILE_SIZE / 2
+            );
+        }
+
+        // 更新游戏逻辑
+        function update() {
+            if (isGameOver || isPaused) return;
+
+            // 计算时间差（以秒为单位）
+            const currentTime = Date.now();
+            const deltaTime = (currentTime - lastTime) / 1000;
+            lastTime = currentTime;
+
+            // 检查是否到达终点
+            if (player.x === MAZE_WIDTH - 2 && player.y === MAZE_HEIGHT - 2) {
+                if (hasKey) {
+                    endGame(true);
+                } else {
+                    messageTextElement.textContent = '需要钥匙才能到达终点！';
+                    messageElement.style.display = 'block';
+                    setTimeout(() => {
+                        messageElement.style.display = 'none';
+                    }, 2000);
+                }
+                return;
+            }
+
+            // 更新时间
+            timeLeft -= deltaTime;
+            timerElement.textContent = Math.ceil(timeLeft);
+
+            // 检查时间是否耗尽
+            if (timeLeft <= 0) {
+                endGame(false);
+                return;
+            }
+
+            // 更新迷宫折叠计时器
+            foldTimer -= deltaTime;
+            if (foldTimer <= 0) {
+                foldMaze();
+                foldTimer = FOLD_INTERVAL;
+            }
+
+            // 检查玩家是否踩到陷阱
+            traps.forEach(trap => {
+                if (player.x === trap.x && player.y === trap.y) {
+                    endGame(false); // 碰到陷阱直接游戏结束
+                }
+            });
+
+            // 检查玩家是否捡到破墙道具
+            wallBreakers.forEach((breaker, index) => {
+                if (player.x === breaker.x && player.y === breaker.y) {
+                    wallBreakerUses = 1; // 获得一次破墙机会
+                    wallBreakerElement.textContent = wallBreakerUses;
+                    wallBreakers.splice(index, 1); // 移除道具
+                }
+            });
+
+            // 检查玩家是否捡到钥匙
+            if (!hasKey && player.x === key.x && player.y === key.y) {
+                hasKey = true;
+                key = null; // 钥匙被捡起后不再生成
+                keyStatusElement.textContent = '已获得';
+            }
+        }
+
+        // 折叠迷宫
+        function foldMaze() {
+            for (let y = 0; y < MAZE_HEIGHT; y++) {
+                for (let x = 0; x < MAZE_WIDTH; x++) {
+                    // 跳过钥匙所在位置的墙体
+                    if (key && x === key.x && y === key.y) continue;
+                    if (Math.random() > 0.5) {
+                        maze[y][x] = 1 - maze[y][x]; // 翻转墙和路
+                    }
+                }
+            }
+            // 确保起点、终点和玩家位置是通路
+            maze[1][1] = 0;
+            maze[MAZE_HEIGHT - 2][MAZE_WIDTH - 2] = 0;
+            maze[player.y][player.x] = 0; // 确保玩家位置不是墙
+		generateTraps();
+generateWallBreakers();
+        }
+
+        // 游戏结束
+        function endGame(isWin) {
+            isGameOver = true;
+            if (isWin) {
+                messageTextElement.textContent = `你赢了！关卡 ${currentLevel} 完成`;
+                nextLevelButton.style.display = 'block'; // 显示下一关按钮
+            } else {
+                messageTextElement.textContent = '游戏结束！';
+            }
+            messageElement.style.display = 'block';
+        }
+
+        // 游戏循环
+        function gameLoop() {
+            update();
+            draw();
+            if (!isGameOver) requestAnimationFrame(gameLoop);
+        }
+
+        // 玩家移动（WASD）
+        window.addEventListener('keydown', (e) => {
+            if (isGameOver || isPaused) return;
+
+            let newX = player.x;
+            let newY = player.y;
+
+            if (e.key === 'w' || e.key === 'W') newY--;
+            if (e.key === 's' || e.key === 'S') newY++;
+            if (e.key === 'a' || e.key === 'A') newX--;
+            if (e.key === 'd' || e.key === 'D') newX++;
+
+            // 检查新位置是否合法
+            if (newX >= 0 && newX < MAZE_WIDTH && newY >= 0 && newY < MAZE_HEIGHT && maze[newY][newX] === 0) {
+                player.x = newX;
+                player.y = newY;
+            }
+        });
+
+        // 破墙功能（E键）
+        window.addEventListener('keydown', (e) => {
+            if (isGameOver || isPaused || wallBreakerUses <= 0) return;
+
+            if (e.key === 'e' || e.key === 'E') {
+                const directions = [
+                    { x: player.x, y: player.y - 1 }, // 上
+                    { x: player.x, y: player.y + 1 }, // 下
+                    { x: player.x - 1, y: player.y }, // 左
+                    { x: player.x + 1, y: player.y }  // 右
+                ];
+
+                directions.forEach(dir => {
+                    if (dir.x >= 0 && dir.x < MAZE_WIDTH && dir.y >= 0 && dir.y < MAZE_HEIGHT && maze[dir.y][dir.x] === 1) {
+                                               maze[dir.y][dir.x] = 0; // 破坏墙体
+                    }
+                });
+
+                wallBreakerUses--;
+                wallBreakerElement.textContent = wallBreakerUses;
+            }
+        });
+
+        // 暂停/继续游戏
+        pauseButton.addEventListener('click', () => {
+            isPaused = !isPaused;
+            pauseButton.textContent = isPaused ? '继续' : '暂停';
+            if (!isPaused) {
+                lastTime = Date.now(); // 重置时间记录
+                gameLoop();
+            }
+        });
+
+        // 重新开始游戏
+        restartButton.addEventListener('click', () => {
+            resetGame();
+        });
+
+        // 下一关
+        nextLevelButton.addEventListener('click', () => {
+            currentLevel++;
+            TILE_SIZE = Math.max(5, TILE_SIZE / 2); // 格子变小
+            MAZE_WIDTH = Math.floor(MAZE_WIDTH * 2); // 迷宫宽度增加
+            MAZE_HEIGHT = Math.floor(MAZE_HEIGHT * 2); // 迷宫高度增加
+            TRAP_COUNT += 2; // 陷阱数量增加
+            timeLeft = TIME_LIMIT; // 重置时间
+            foldTimer = FOLD_INTERVAL; // 重置迷宫折叠计时器
+            wallBreakerUses = 0; // 重置破墙道具
+            wallBreakerElement.textContent = wallBreakerUses;
+            levelElement.textContent = currentLevel; // 更新关卡显示
+            isGameOver = false;
+            messageElement.style.display = 'none';
+            nextLevelButton.style.display = 'none';
+            player = { x: 1, y: 1 }; // 重置玩家位置
+            hasKey = false; // 重置钥匙状态
+            key = null; // 重置钥匙位置
+            init(); // 重新初始化游戏
+        });
+
+        // 重置游戏
+        function resetGame() {
+            currentLevel = 1;
+            TILE_SIZE = INITIAL_TILE_SIZE;
+            MAZE_WIDTH = INITIAL_MAZE_WIDTH;
+            MAZE_HEIGHT = INITIAL_MAZE_HEIGHT;
+            TRAP_COUNT = INITIAL_TRAP_COUNT;
+            timeLeft = TIME_LIMIT;
+            foldTimer = FOLD_INTERVAL;
+            wallBreakerUses = 0;
+            wallBreakerElement.textContent = wallBreakerUses;
+            levelElement.textContent = currentLevel;
+            hasKey = false;
+            keyStatusElement.textContent = '未获得';
+            isGameOver = false;
+            isPaused = false;
+            messageElement.style.display = 'none';
+            nextLevelButton.style.display = 'none';
+            player = { x: 1, y: 1 };
+            key = null; // 重置钥匙位置
+            init();
+        }
+
+        // 启动游戏
+        init();
+    </script>
+</body>
+</html>
